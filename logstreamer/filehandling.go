@@ -371,7 +371,7 @@ type LogstreamSet struct {
 	logstreamMutex *sync.RWMutex // Locking for manipulation of logstreams
 	logRoot        string        // Base path to walk for logfiles (ie, /var/log)
 	journalRoot    string        // Base path for journal files (ie, /etc/journals)
-	fileMatch      *regexp.Regexp
+	fileMatch      string        // File match regexp
 }
 
 // append a path separator if needed and escape regexp meta characters
@@ -396,18 +396,14 @@ func NewLogstreamSet(sortPattern *SortPattern, oldest time.Duration,
 	}
 	sortPattern.Translation = newTranslation
 
-	realLogRoot, err := filepath.EvalSymlinks(logRoot)
-	if err != nil {
-		return nil, err
-	}
 	ls := &LogstreamSet{
 		logstreams:     make(map[string]*Logstream),
 		oldestDuration: oldest,
 		sortPattern:    sortPattern,
-		logRoot:        realLogRoot,
+		logRoot:        logRoot,
 		journalRoot:    journalRoot,
 		logstreamMutex: new(sync.RWMutex),
-		fileMatch:      fileMatchRegexp(realLogRoot, sortPattern.FileMatch),
+		fileMatch:      sortPattern.FileMatch,
 	}
 	return ls, nil
 }
@@ -442,8 +438,16 @@ func (ls *LogstreamSet) ScanForLogstreams() (result []string, errors *MultipleEr
 	result = make([]string, 0, 0)
 	errors = NewMultipleError()
 
+	// EvalSymlinks returns an error if the path does not exist
+	logRoot, err := filepath.EvalSymlinks(ls.logRoot)
+	if err != nil {
+		return
+	}
+
+	fileMatch := fileMatchRegexp(logRoot, ls.fileMatch)
+
 	// Scan for all our logfiles
-	logfiles := ScanDirectoryForLogfiles(ls.logRoot, ls.fileMatch)
+	logfiles := ScanDirectoryForLogfiles(logRoot, fileMatch)
 
 	// Filter out old logfiles
 	if ls.oldestDuration != time.Duration(0) {
@@ -451,7 +455,7 @@ func (ls *LogstreamSet) ScanForLogstreams() (result []string, errors *MultipleEr
 	}
 
 	// Setup all the sorting ints in every logfile
-	logfiles.PopulateMatchParts(ls.fileMatch, ls.sortPattern.Translation)
+	logfiles.PopulateMatchParts(fileMatch, ls.sortPattern.Translation)
 
 	// Split up the logfiles into a map
 	mfs := FilterMultipleStreamFiles(logfiles, ls.sortPattern.Differentiator)
